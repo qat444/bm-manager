@@ -5,6 +5,13 @@ import re
 import shutil
 import time
 from pathlib import Path
+import requests
+from bs4 import BeautifulSoup
+from sklearn.feature_extraction.text import TfidfVectorizer
+import sys
+
+# Add the site-packages path to sys.path for google.generativeai
+sys.path.append(r"C:\Users\jordi\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages")
 
 class BookmarkStorage:
     def __init__(self, filename="bookmarks.json"):
@@ -34,15 +41,85 @@ class BookmarkStorage:
             return 1
         return max(b['id'] for b in all_bookmarks) + 1
 
-    def add_bookmark(self, url, title, topic, related_bookmarks=None):
+    def _generate_tags_from_url(self, url):
+        try:
+            script_dir = Path(__file__).parent
+            config_path = script_dir / 'config.json'
+
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            
+            gemini_api_key = config.get('gemini_api_key')
+
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'html.parser')
+
+            for script in soup(["script", "style"]):
+                script.extract()
+
+            text = ""
+            for element in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'a', 'span', 'div', 'title']):
+                text += element.get_text(separator=' ', strip=True) + ' '
+
+            for meta in soup.find_all('meta'):
+                if meta.get('name') == 'description':
+                    text += meta.get('content', '') + ' '
+                if meta.get('name') == 'keywords':
+                    text += meta.get('content', '') + ' '
+
+            if not text:
+                return []
+
+            if gemini_api_key:
+                import google.generativeai as genai
+                genai.configure(api_key=gemini_api_key)
+                model = genai.GenerativeModel('gemini-pro-latest')
+                prompt = f"Based on the following text from a website, please provide a list of 5-10 relevant keywords that summarize the content. Return the keywords as a comma-separated list. For example: 'keyword1, keyword2, keyword3'.\n\nText: {text[:2000]}"
+                response = model.generate_content(prompt)
+                tags = [tag.strip() for tag in response.text.split(',')]
+                return tags
+            else:
+                from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+                custom_stop_words = list(ENGLISH_STOP_WORDS) + [
+                    "com", "disable", "fret", "privacy", "try", "login", "signup", "register", "home", "about", 
+                    "contact", "search", "menu", "navigation", "share", "like", "follow", "copyright", "rights", 
+                    "reserved", "policy", "terms", "conditions", "cookies", "settings", "preferences", "close", 
+                    "accept", "decline", "manage", "continue", "next", "previous", "back", "more", "read", "view", 
+                    "open", "new", "window", "tab", "email", "password", "username", "account", "profile", "edit", 
+                    "save", "cancel", "submit", "send", "message", "subscribe", "unsubscribe", "download", "upload", 
+                    "cart", "checkout", "buy", "sell", "price", "shipping", "returns", "support", "help", "faq", 
+                    "blog", "news", "events", "jobs", "careers", "press", "investors", "partners", "api", "docs", 
+                    "documentation", "forum", "community", "support", "feedback", "sitemap", "english", "espanol", 
+                    "francais", "deutsch", "italiano", "portugues", "русский", "zhongwen", "nihongo", "hangukeo", 
+                    "login", "log", "in", "out", "forgot", "your", "password", "remember", "me", "don't", "have", 
+                    "an", "account", "create", "one", "by", "clicking", "here", "or", "connect", "with", "google", 
+                    "facebook", "twitter", "linkedin", "github", "apple", "microsoft", "amazon"
+                ]
+
+                vectorizer = TfidfVectorizer(stop_words=custom_stop_words, max_features=5)
+                vectorizer.fit_transform([text])
+                tags = vectorizer.get_feature_names_out()
+                return tags
+        except Exception as e:
+            print(f"Error generating tags for {url}: {e}")
+            return []
+
+    def add_bookmark(self, url, title, topic, related_bookmarks=None, tags=None):
         data = self._read_data()
         bookmark_id = self._get_next_id()
+        
+        auto_tags = self._generate_tags_from_url(url)
         
         new_bookmark = {
             "id": bookmark_id,
             "url": url,
             "title": title or url,
-            "related_bookmarks": related_bookmarks or []
+            "related_bookmarks": related_bookmarks or [],
+            "tags": {
+                "manual": tags or [],
+                "auto": list(auto_tags)
+            }
         }
 
         if topic not in data:
@@ -52,7 +129,7 @@ class BookmarkStorage:
         self._write_data(data)
         return bookmark_id
 
-    def search_bookmarks(self, query, in_title=False, in_url=False, in_topic=False):
+    def search_bookmarks(self, query, in_title=False, in_url=False, in_topic=False, in_tags=False):
         data = self._read_data()
         results = []
         all_bookmarks = [(b, topic) for topic, bookmarks in data.items() for b in bookmarks]
@@ -63,18 +140,34 @@ class BookmarkStorage:
             # Fallback to simple search if regex is invalid
             query = query.lower()
             for bookmark, topic_name in all_bookmarks:
-                if (not in_title and not in_url and not in_topic) or \
+                tags = bookmark.get('tags', {})
+                if isinstance(tags, dict):
+                    manual_tags = tags.get('manual', [])
+                    auto_tags = tags.get('auto', [])
+                    all_tags = manual_tags + auto_tags
+                else:
+                    all_tags = tags
+                if (not in_title and not in_url and not in_topic and not in_tags) or \
                    (in_title and query in bookmark['title'].lower()) or \
                    (in_url and query in bookmark['url'].lower()) or \
-                   (in_topic and query in topic_name.lower()):
+                   (in_topic and query in topic_name.lower()) or \
+                   (in_tags and any(query in tag.lower() for tag in all_tags)):
                     results.append({**bookmark, "topic": topic_name})
             return results
 
         for bookmark, topic_name in all_bookmarks:
-            if (not in_title and not in_url and not in_topic) or \
+            tags = bookmark.get('tags', {})
+            if isinstance(tags, dict):
+                manual_tags = tags.get('manual', [])
+                auto_tags = tags.get('auto', [])
+                all_tags = manual_tags + auto_tags
+            else:
+                all_tags = tags
+            if (not in_title and not in_url and not in_topic and not in_tags) or \
                (in_title and regex.search(bookmark['title'])) or \
                (in_url and regex.search(bookmark['url'])) or \
-               (in_topic and regex.search(topic_name)):
+               (in_topic and regex.search(topic_name)) or \
+               (in_tags and any(regex.search(tag) for tag in all_tags)):
                 results.append({**bookmark, "topic": topic_name})
         
         return results
@@ -107,7 +200,11 @@ class BookmarkStorage:
                 return True
         return False
 
-    def edit_bookmark(self, bookmark_id, new_url=None, new_title=None, new_topic=None):
+    def delete_all_bookmarks(self):
+        self._write_data({})
+        return True
+
+    def edit_bookmark(self, bookmark_id, new_url=None, new_title=None, new_topic=None, new_tags=None):
         data = self._read_data()
         for topic, bookmarks in data.items():
             for bookmark in bookmarks:
@@ -116,6 +213,8 @@ class BookmarkStorage:
                         bookmark['url'] = new_url
                     if new_title:
                         bookmark['title'] = new_title
+                    if new_tags:
+                        bookmark['tags']['manual'] = new_tags
                     
                     if new_topic and new_topic != topic:
                         # Move bookmark to a new topic
@@ -154,6 +253,20 @@ class BookmarkStorage:
         
         return False
 
+    def find_duplicate_bookmarks(self):
+        data = self._read_data()
+        all_bookmarks = self.list_bookmarks()
+        
+        urls = {}
+        for bookmark in all_bookmarks:
+            url = bookmark['url']
+            if url not in urls:
+                urls[url] = []
+            urls[url].append(bookmark['id'])
+            
+        duplicates = [ids for ids in urls.values() if len(ids) > 1]
+        return duplicates
+
     def backup_bookmarks(self):
         backup_filename = f"bookmarks_backup_{int(time.time())}.json"
         shutil.copy(self.filename, backup_filename)
@@ -165,9 +278,13 @@ class BookmarkStorage:
             import csv
             with open(filename, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(["ID", "URL", "Title", "Topic", "Related IDs"])
+                writer.writerow(["ID", "URL", "Title", "Topic", "Manual Tags", "Auto Tags", "Related IDs"])
                 for b in bookmarks:
-                    writer.writerow([b['id'], b['url'], b['title'], b['topic'], ','.join(map(str, b.get('related_bookmarks', [])))])
+                    tags = b.get('tags', {})
+                    manual_tags = ','.join(tags.get('manual', []))
+                    auto_tags = ','.join(tags.get('auto', []))
+                    related_ids = ','.join(map(str, b.get('related_bookmarks', [])))
+                    writer.writerow([b['id'], b['url'], b['title'], b['topic'], manual_tags, auto_tags, related_ids])
             return True
         elif export_format == "html":
             with open(filename, 'w') as f:
@@ -176,8 +293,11 @@ class BookmarkStorage:
                 for topic, topic_bookmarks in self._read_data().items():
                     f.write(f"<h2>{topic}</h2><ul>")
                     for b in topic_bookmarks:
+                        tags = b.get('tags', {})
+                        manual_tags_str = f" (Manual Tags: {', '.join(tags.get('manual', []))})" if tags.get('manual') else ""
+                        auto_tags_str = f" (Auto Tags: {', '.join(tags.get('auto', []))})" if tags.get('auto') else ""
                         related_str = f" (Related: {', '.join(map(str, b.get('related_bookmarks', [])))})" if b.get('related_bookmarks') else ""
-                        f.write(f"<li><a href='{b['url']}'>{b['title']}</a>{related_str}</li>")
+                        f.write(f"<li><a href='{b['url']}'>{b['title']}</a>{manual_tags_str}{auto_tags_str}{related_str}</li>")
                     f.write("</ul>")
                 f.write("</body></html>")
             return True
