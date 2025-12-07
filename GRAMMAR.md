@@ -12,16 +12,18 @@ For a detailed guide on the JSON structure used by this system, please see [JSON
 
 ### `add`
 
-Fabricates a new connection (bookmark). The `add` command is flexible and can handle multi-word titles without quotes.
+Fabricates a new connection (bookmark). The `add` command is flexible and can handle multi-word titles without quotes. It will automatically prepend `https://` to URLs without a protocol.
+
+**Note:** This command will not create a bookmark if a connection with the exact same URL already exists.
 
 **Syntax:**
 `add <url> [--title <title>] [--topic <topic>] [--tags <tag1> <tag2> ...] [--related <id1> <id2> ...]`
 
--   `<url>`: The destination URI of the bookmark. (Required)
--   `--title <title>` or `-t <title>`: A descriptor for the link. If not provided, the URL will be used as the title.
--   `--topic <topic>` or `-c <topic>`: The classification layer for the bookmark. Defaults to "general".
--   `--tags <tag1> <tag2> ...` or `-g <tag1> <tag2> ...`: A list of manual tags to add to the bookmark.
--   `--related <id1> <id2> ...` or `-r <id1> <id2> ...`: Link this new bookmark to one or more existing connections by their IDs.
+-	`<url>`: The destination URI of the bookmark. (Required)
+-	`--title <title>` or `-t <title>`: A descriptor for the link. If not provided, the URL will be used as the title.
+-	`--topic <topic>` or `-c <topic>`: The classification layer for the bookmark. Defaults to "general".
+-	`--tags <tag1> <tag2> ...` or `-g <tag1> <tag2> ...`: A list of manual tags to add to the bookmark.
+-	`--related <id1> <id2> ...` or `-r <id1> <id2> ...`: Link this new bookmark to one or more existing connections by their IDs.
 
 ---
 
@@ -32,13 +34,13 @@ Traverses the layers for a pattern.
 **Syntax:**
 `search <query> [--in-title] [--in-url] [--in-topic] [--in-tags]`
 
--   `<query>`: The pattern to search for. Can be a regular expression.
--   `--in-title`: Restricts the search to bookmark titles.
--   `--in-url`: Restricts the search to bookmark URLs.
--   `--in-topic`: Restricts the search to topic names.
--   `--in-tags`: Restricts the search to both manual and auto tags.
+-	`<query>`: The pattern to search for. Can be a regular expression.
+-	`--in-title`: Restricts the search to bookmark titles.
+-	`--in-url`: Restricts the search to bookmark URLs.
+-	`--in-topic`: Restricts the search to topic names.
+-	`--in-tags`: Restricts the search to both manual and auto tags.
 
-If no scope is specified, the search will be performed across titles, topics and tags.
+If no scope is specified, the search will be performed across titles, topics, and tags.
 
 ---
 
@@ -49,7 +51,7 @@ Reveals all established connections.
 **Syntax:**
 `list [topic]`
 
--   `[topic]`: If provided, lists all connections within a specific classification layer. If omitted, lists all connections across all topics.
+-	`[topic]`: If provided, lists all connections within a specific classification layer. If omitted, lists all connections across all topics.
 
 ---
 
@@ -69,7 +71,7 @@ Severs a connection.
 **Syntax:**
 `delete <id>`
 
--   `<id>`: The identifier of the connection to sever.
+-	`<id>`: The identifier of the connection to sever.
 
 ---
 
@@ -80,11 +82,11 @@ Modifies an existing connection.
 **Syntax:**
 `edit <id> [--url <url>] [--title <title>] [--topic <topic>] [--tags <tag1> <tag2> ...]`
 
--   `<id>`: The identifier of the connection to modify.
--   `--url <url>`: The new destination URI.
--   `--title <title>`: The new descriptor.
--   `--topic <topic>`: The new classification layer. This will move the bookmark to the new topic.
--   `--tags <tag1> <tag2> ...`: Replaces the existing manual tags with the new ones.
+-	`<id>`: The identifier of the connection to modify.
+-	`--url <url>`: The new destination URI.
+-	`--title <title>`: The new descriptor.
+-	`--topic <topic>`: The new classification layer. This will move the bookmark to the new topic.
+-	`--tags <tag1> <tag2> ...`: Replaces the existing manual tags with the new ones.
 
 ---
 
@@ -95,16 +97,38 @@ Creates a relationship between two connections.
 **Syntax:**
 `relate <id1> <id2>`
 
--   `<id1>`: The first connection ID.
--   `<id2>`: The second connection ID.
+-	`<id1>`: The first connection ID.
+-	`<id2>`: The second connection ID.
 
 This will create a bi-directional link between the two bookmarks.
 
 ---
 
+### `info`
+
+Shows all details for a single bookmark by its ID.
+
+**Syntax:**
+`info <id>`
+
+-	`<id>`: The identifier of the connection to inspect.
+
+---
+
+### `stats`
+
+Displays database statistics.
+
+**Syntax:**
+`stats`
+
+This command shows the total number of bookmarks, the total number of topics, and a table with the bookmark count for each topic.
+
+---
+
 ### `backup`
 
-Creates a data shadow (a backup of the bookmarks file).
+Creates a data shadow (a timestamped backup of the bookmarks file).
 
 **Syntax:**
 `backup`
@@ -118,8 +142,26 @@ Translates data to a different protocol.
 **Syntax:**
 `export <format> <filename>`
 
--   `<format>`: The target protocol. Can be `csv` or `html`.
--   `<filename>`: The name for the translated data file.
+-	`<format>`: The target protocol. Can be `csv` or `html`.
+-	`<filename>`: The name for the translated data file.
+
+---
+
+### `find-duplicates`
+
+Finds bookmarks that share the same URL.
+
+**Syntax:**
+`find-duplicates`
+
+---
+
+### `erase-all`
+
+Deletes all bookmarks after a confirmation prompt.
+
+**Syntax:**
+`erase-all`
 
 ---
 

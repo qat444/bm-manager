@@ -41,7 +41,7 @@ class BookmarkStorage:
             return 1
         return max(b['id'] for b in all_bookmarks) + 1
 
-    def _generate_tags_from_url(self, url):
+    def _generate_info_from_url(self, url):
         try:
             script_dir = Path(__file__).parent
             config_path = script_dir / 'config.json'
@@ -51,7 +51,10 @@ class BookmarkStorage:
             
             gemini_api_key = config.get('gemini_api_key')
 
-            response = requests.get(url, timeout=10)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            response = requests.get(url, timeout=10, headers=headers)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
 
@@ -69,16 +72,26 @@ class BookmarkStorage:
                     text += meta.get('content', '') + ' '
 
             if not text:
-                return []
+                return {}
 
             if gemini_api_key:
                 import google.generativeai as genai
                 genai.configure(api_key=gemini_api_key)
                 model = genai.GenerativeModel('gemini-pro-latest')
-                prompt = f"Based on the following text from a website, please provide a list of 5-10 relevant keywords that summarize the content. Return the keywords as a comma-separated list. For example: 'keyword1, keyword2, keyword3'.\n\nText: {text[:2000]}"
+                prompt = f"Based on the following text from a website, please provide a suitable title, a single topic category, and a list of 5-10 relevant keywords. Return the result as a JSON object with keys 'title', 'topic', and 'tags'. For example: {{\"title\": \"Example Title\", \"topic\": \"Technology\", \"tags\": [\"keyword1\", \"keyword2\"]}}.\n\nText: {text[:2000]}"
                 response = model.generate_content(prompt)
-                tags = [tag.strip() for tag in response.text.split(',')]
-                return tags
+                
+                # Clean the response text before parsing
+                clean_response = response.text.strip()
+                if clean_response.startswith("```json"):
+                    clean_response = clean_response[7:]
+                if clean_response.endswith("```"):
+                    clean_response = clean_response[:-3]
+                
+                try:
+                    return json.loads(clean_response)
+                except json.JSONDecodeError:
+                    return {} # Return empty dict if JSON is malformed
             else:
                 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
                 custom_stop_words = list(ENGLISH_STOP_WORDS) + [
@@ -100,21 +113,42 @@ class BookmarkStorage:
                 vectorizer = TfidfVectorizer(stop_words=custom_stop_words, max_features=5)
                 vectorizer.fit_transform([text])
                 tags = vectorizer.get_feature_names_out()
-                return tags
+                return {"tags": list(tags)}
         except Exception as e:
-            print(f"Error generating tags for {url}: {e}")
-            return []
+            print(f"Error generating info for {url}: {e}")
+            return {}
 
     def add_bookmark(self, url, title, topic, related_bookmarks=None, tags=None):
+        if '://' not in url:
+            url = 'https://' + url
+        
+        # Check for duplicates
+        all_bookmarks = self.list_bookmarks()
+        for bookmark in all_bookmarks:
+            if bookmark['url'] == url:
+                return None  # Duplicate found
+
         data = self._read_data()
         bookmark_id = self._get_next_id()
         
-        auto_tags = self._generate_tags_from_url(url)
+        generated_info = self._generate_info_from_url(url)
+        auto_title = generated_info.get('title')
+        auto_topic = generated_info.get('topic')
+        auto_tags = generated_info.get('tags', [])
+
+        final_title = title or auto_title or url
         
+        # If the user provides a topic other than "general", use it.
+        # Otherwise, use the auto-generated topic, or default to "general".
+        if topic and topic != "general":
+            final_topic = topic
+        else:
+            final_topic = auto_topic or "general"
+
         new_bookmark = {
             "id": bookmark_id,
             "url": url,
-            "title": title or url,
+            "title": final_title,
             "related_bookmarks": related_bookmarks or [],
             "tags": {
                 "manual": tags or [],
@@ -122,10 +156,10 @@ class BookmarkStorage:
             }
         }
 
-        if topic not in data:
-            data[topic] = []
+        if final_topic not in data:
+            data[final_topic] = []
         
-        data[topic].append(new_bookmark)
+        data[final_topic].append(new_bookmark)
         self._write_data(data)
         return bookmark_id
 
@@ -210,6 +244,8 @@ class BookmarkStorage:
             for bookmark in bookmarks:
                 if bookmark['id'] == bookmark_id:
                     if new_url:
+                        if '://' not in new_url:
+                            new_url = 'https://' + new_url
                         bookmark['url'] = new_url
                     if new_title:
                         bookmark['title'] = new_title
@@ -302,3 +338,21 @@ class BookmarkStorage:
                 f.write("</body></html>")
             return True
         return False
+
+    def get_bookmark_by_id(self, bookmark_id):
+        all_bookmarks = self.list_bookmarks()
+        for bookmark in all_bookmarks:
+            if bookmark['id'] == bookmark_id:
+                return bookmark
+        return None
+
+    def get_stats(self):
+        data = self._read_data()
+        total_bookmarks = sum(len(bookmarks) for bookmarks in data.values())
+        total_topics = len(data)
+        bookmarks_per_topic = {topic: len(bookmarks) for topic, bookmarks in data.items()}
+        return {
+            "total_bookmarks": total_bookmarks,
+            "total_topics": total_topics,
+            "bookmarks_per_topic": bookmarks_per_topic,
+        }

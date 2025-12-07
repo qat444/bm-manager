@@ -7,6 +7,7 @@ from pathlib import Path
 from bookmark_storage import BookmarkStorage
 from rich.console import Console
 from rich.table import Table
+from rich.panel import Panel
 
 def print_header(console, config):
     console.clear()
@@ -91,9 +92,16 @@ def main():
     # 'clear' command
     subparsers.add_parser("clear", help="Refresh the NAVI interface.", add_help=False)
 
+    # 'stats' command
+    subparsers.add_parser("stats", help="Display statistics about the bookmarks.", add_help=False)
+
+    # 'info' command
+    info_parser = subparsers.add_parser("info", help="Get detailed information about a specific bookmark.", add_help=False)
+    info_parser.add_argument("id", type=int, help="The ID of the bookmark to inspect.")
+
     while True:
         try:
-            num_bookmarks = len(storage.list_bookmarks())
+            num_bookmarks = storage.get_stats()['total_bookmarks']
             prompt = f"[dim][{num_bookmarks} connections][/dim] > "
             
             user_input = console.input(prompt)
@@ -158,7 +166,10 @@ def main():
 
                 if url:
                     bookmark_id = storage.add_bookmark(url, title, topic, related, tags)
-                    console.print(f"[green]Connection established. Record created with ID: {bookmark_id}[/green]")
+                    if bookmark_id is not None:
+                        console.print(f"[green]Connection established. Record created with ID: {bookmark_id}[/green]")
+                    else:
+                        console.print("[yellow]A connection with this URL already exists.[/yellow]")
                 else:
                     console.print("[yellow]URL is required for the add command.[/yellow]")
                 continue
@@ -271,26 +282,65 @@ def main():
                     console.print(f"[green]Data translated to {args.format} and stored at {args.filename}[/green]")
                 else:
                     console.print("[red]Translation failed.[/red]")
+            elif args.command == "stats":
+                stats = storage.get_stats()
+                console.print(Panel(f"[bold]Total Connections:[/bold] {stats['total_bookmarks']}\n[bold]Total Topics:[/bold] {stats['total_topics']}", 
+                                    title="[bold cyan]NAVI Statistics[/bold cyan]", border_style="cyan"))
+                
+                if stats['bookmarks_per_topic']:
+                    table = Table(show_header=True, header_style="bold magenta", border_style="cyan")
+                    table.add_column("Topic")
+                    table.add_column("Connections")
+                    for topic, count in stats['bookmarks_per_topic'].items():
+                        table.add_row(topic, str(count))
+                    console.print(table)
+            elif args.command == "info":
+                bookmark = storage.get_bookmark_by_id(args.id)
+                if bookmark:
+                    tags = bookmark.get('tags', {})
+                    if isinstance(tags, dict):
+                        manual_tags = ', '.join(tags.get('manual', []))
+                        auto_tags = ', '.join(tags.get('auto', []))
+                    else:
+                        manual_tags = ', '.join(tags)
+                        auto_tags = ""
+                    
+                    related_str = ', '.join(map(str, bookmark.get('related_bookmarks', [])))
+                    
+                    info_str = (f"[bold]ID:[/bold] {bookmark['id']}\n"
+                                f"[bold]Title:[/bold] {bookmark['title']}\n"
+                                f"[bold]URL:[/bold] {bookmark['url']}\n"
+                                f"[bold]Topic:[/bold] {bookmark['topic']}\n"
+                                f"[bold]Manual Tags:[/bold] {manual_tags}\n"
+                                f"[bold]Auto Tags:[/bold] {auto_tags}\n"
+                                f"[bold]Related:[/bold] {related_str}")
+                    console.print(Panel(info_str, title=f"[bold cyan]Connection Details: ID {bookmark['id']}[/bold cyan]", border_style="cyan"))
+                else:
+                    console.print(f"[yellow]Signal lost. Connection with ID {args.id} not found.[/yellow]")
             elif args.command == "help":
                 console.print("\n[bold cyan]NAVI (Networked Administrative Visual Interface)[/bold cyan]\n")
                 console.print("A gateway to the Wired. All information is a connection.\n")
                 
                 table = Table(show_header=True, header_style="bold magenta", border_style="cyan", show_lines=True)
-                table.add_column("Command", style="dim", width=12)
+                table.add_column("Command", style="dim", width=15)
                 table.add_column("Description")
 
-                table.add_row("add", "Fabricate a new connection. Use --related to link to other connections by ID.")
-                table.add_row("search", "Traverse the layers for a pattern. Use --in-title, --in-url, or --in-topic to specify scope.")
-                table.add_row("list", "Reveal all established connections, or list connections in a specific topic.")
-                table.add_row("topics", "List all classification layers.")
-                table.add_row("delete", "Sever a connection.")
-                table.add_row("edit", "Modify an existing connection.")
-                table.add_row("relate", "Create a relationship between two connections.")
-                table.add_row("backup", "Create a data shadow.")
-                table.add_row("export", "Translate data to a different protocol.")
-                table.add_row("help", "Display this help message.")
-                table.add_row("clear", "Refresh the NAVI interface.")
-                table.ad_row("exit", "Close the connection to the Wired.")
+                table.add_row("add <url> [options]", "Creates a new bookmark. URL is required. Will not add duplicates.")
+                table.add_row("search <query> [scopes]", "Searches for bookmarks. Use scopes like --in-title, --in-url, etc.")
+                table.add_row("list [topic]", "Lists all bookmarks, or optionally, all bookmarks in a specific topic.")
+                table.add_row("topics", "Lists all available topics (classification layers).")
+                table.add_row("delete <id>", "Deletes a bookmark by its unique ID.")
+                table.add_row("edit <id> [options]", "Modifies a bookmark's URL, title, topic, or tags.")
+                table.add_row("relate <id1> <id2>", "Creates a bi-directional link between two bookmarks.")
+                table.add_row("info <id>", "Shows all details for a single bookmark by its ID.")
+                table.add_row("stats", "Displays database statistics, like total bookmarks and topics.")
+                table.add_row("backup", "Creates a timestamped backup of the bookmarks JSON file.")
+                table.add_row("export <format> <file>", "Exports bookmarks to another format (csv or html).")
+                table.add_row("find-duplicates", "Finds bookmarks that share the same URL.")
+                table.add_row("erase-all", "Deletes all bookmarks after a confirmation prompt.")
+                table.add_row("help", "Displays this help message.")
+                table.add_row("clear", "Clears the screen and refreshes the header.")
+                table.add_row("exit", "Exits the application.")
                 
                 console.print(table)
 
